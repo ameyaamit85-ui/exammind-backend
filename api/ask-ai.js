@@ -14,11 +14,13 @@ export default async function handler(req, res) {
 
         const { promptText, isFollowUp } = req.body;
         
+        // 🚀 THE FIX: Updated to Groq's Latest Llama 3.1 Model
         const bodyData = {
-            model: 'llama3-8b-8192',
+            model: 'llama-3.1-8b-instant', 
             messages: [{ role: 'user', content: promptText }]
         };
-        // Safely add JSON requirement
+        
+        // Safely enforce JSON for the main concepts
         if (!isFollowUp) bodyData.response_format = { type: 'json_object' };
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
