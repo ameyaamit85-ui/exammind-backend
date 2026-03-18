@@ -14,22 +14,29 @@ export default async function handler(req, res) {
             return res.status(500).json({ error: 'VERCEL_ERROR', details: 'API Keys missing' });
         }
 
-        const { promptText, isFollowUp, contextData } = req.body;
+        // 🚀 Frontend ab bheja karega 'modelChoice' (groq ya gemini)
+        const { promptText, isFollowUp, contextData, modelChoice } = req.body;
 
-        // 🧠 RAG INJECTION: Agar database mein data hai, toh AI ko de do!
         let finalPrompt = promptText;
         if (contextData) {
             finalPrompt += `\n\nCRITICAL EXAMMIND DATABASE CONTEXT: ${contextData}. You MUST ground your explanation and formula using this verified data to ensure 100% accuracy.`;
         }
 
-        const isNumerical = /\d/.test(promptText) && /calculate|find|determine|value|equation|evaluate/i.test(promptText);
+        // 🧠 NAYA LOGIC: User Control > Auto Router
+        let useGemini = false;
+        if (modelChoice === 'gemini') {
+            useGemini = true;
+        } else if (modelChoice === 'groq') {
+            useGemini = false;
+        } else {
+            // Agar user ne select nahi kiya, tabhi Auto-Route karo
+            useGemini = /\d/.test(promptText) && /calculate|find|determine|value|equation|evaluate/i.test(promptText);
+        }
 
         let aiResultData;
 
-        if (isNumerical) {
-            // 🚀 ROUTE 1: HARD MATH -> Gemini 2.5 Flash
+        if (useGemini) {
             const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-            
             const geminiResponse = await fetch(geminiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -40,15 +47,10 @@ export default async function handler(req, res) {
             });
 
             const geminiData = await geminiResponse.json();
-            
-            // Bulletproof checking
             aiResultData = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!aiResultData) {
-                return res.status(500).json({ error: 'GEMINI_SAFETY_BLOCK', details: 'Model blocked the response or returned empty.' });
-            }
+            if (!aiResultData) throw new Error('Gemini returned an empty response.');
             
         } else {
-            // 🚀 ROUTE 2: THEORY -> Groq Llama 3.3
             const groqBody = {
                 model: 'llama-3.3-70b-versatile', 
                 messages: [{ role: 'user', content: finalPrompt }],
@@ -64,12 +66,10 @@ export default async function handler(req, res) {
 
             const groqData = await groqResponse.json();
             aiResultData = groqData?.choices?.[0]?.message?.content;
-            if (!aiResultData) {
-                return res.status(500).json({ error: 'GROQ_ERROR', details: 'Llama returned empty response.' });
-            }
+            if (!aiResultData) throw new Error('Groq returned an empty response.');
         }
 
-        return res.status(200).json({ content: aiResultData, routedTo: isNumerical ? 'Gemini 2.5 Flash' : 'Llama 3.3 70B' });
+        return res.status(200).json({ content: aiResultData, routedTo: useGemini ? 'Gemini 2.5 Flash' : 'Llama 3.3 70B' });
 
     } catch (error) {
         return res.status(500).json({ error: 'ROUTING_ENGINE_CRASH', details: error.toString() });
