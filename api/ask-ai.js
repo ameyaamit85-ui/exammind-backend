@@ -9,18 +9,17 @@ export default async function handler(req, res) {
     try {
         const GROQ_API_KEY = process.env.GROQ_API_KEY;
         if (!GROQ_API_KEY) {
-            return res.status(500).json({ error: 'VERCEL_ERROR', details: 'API Key missing in Vercel Environment Variables.' });
+            return res.status(500).json({ error: 'VERCEL_ERROR', details: 'API Key missing' });
         }
 
         const { promptText, isFollowUp } = req.body;
         
-        // 🚀 THE FIX: Updated to Groq's Latest Llama 3.1 Model
+        // 🚀 THE UPGRADE: Changed from 8B to the massive 70B Model for heavy Engineering Math!
         const bodyData = {
-            model: 'llama-3.1-8b-instant', 
+            model: 'llama-3.3-70b-versatile', 
             messages: [{ role: 'user', content: promptText }]
         };
         
-        // Safely enforce JSON for the main concepts
         if (!isFollowUp) bodyData.response_format = { type: 'json_object' };
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
