@@ -11,18 +11,32 @@ export default async function handler(req, res) {
         const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
         const { promptText, isFollowUp, contextData, modelChoice } = req.body;
-        let finalPrompt = promptText;
-        if (contextData) {
-            finalPrompt += `\n\nCRITICAL CONTEXT: ${contextData}. Use this verified data.`;
+        
+        let finalPrompt = "";
+
+        if (!isFollowUp) {
+            finalPrompt = `You are an Elite Professor and AI Copilot for GATE, JEE Advanced, and UPSC aspirants. The user asked: "${promptText}".\n`;
+            if (contextData) {
+                finalPrompt += `CRITICAL CONTEXT: ${contextData}. Use this verified data.\n`;
+            }
+            finalPrompt += `
+            CRITICAL FORMATTING RULES:
+            1. "answer": strictly max 2 to 5 words! ONLY the final numerical value or core concept.
+            2. "desc": Detailed 3-4 sentence explanation.
+            3. "trap": Explain the common student mistake deeply.
+            4. "formula": The core mathematical equation used.
+            5. DO NOT USE LaTeX. Use plain text (e.g., 1/r^2).
+            6. Output strictly valid JSON without trailing commas. Keys MUST BE EXACTLY: hidden_scratchpad, formula, answer, confidence, is_match, desc, trap, steps.`;
+        } else {
+            finalPrompt = `You are an Elite Academic AI Tutor. Task: "${promptText}"\nContext: "${contextData}"\nIMPORTANT: Output plain text ONLY. DO NOT output JSON. Provide a highly professional explanation.`;
         }
 
-        // 🔥 EXACT MODEL ROUTING EXACTLY AS PER CEO
         let engine = 'groq'; 
         let specificModel = 'llama-3.3-70b-versatile'; 
 
         if (modelChoice === 'flash-lite') { 
             engine = 'gemini'; 
-            specificModel = 'gemini-3.1-flash-lite-preview'; // DELETED 1.5 PERMANENTLY!
+            specificModel = 'gemini-3.1-flash-lite-preview'; 
         } 
         else if (modelChoice === 'llama-70b') { 
             engine = 'groq'; 
@@ -34,27 +48,46 @@ export default async function handler(req, res) {
         try {
             if (engine === 'gemini') {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/${specificModel}:generateContent?key=${GEMINI_API_KEY}`;
+                
+                const reqBody = { contents: [{ parts: [{ text: finalPrompt }] }] };
+                
+                // 🔥 FORCE GOOGLE TO ONLY SPIT JSON (God Mode)
+                if (!isFollowUp) {
+                    reqBody.generationConfig = { responseMimeType: "application/json" };
+                }
+
                 const response = await fetch(url, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ parts: [{ text: finalPrompt }] }] })
+                    body: JSON.stringify(reqBody)
                 });
                 const data = await response.json();
                 if (data.error) throw new Error(data.error.message);
                 aiResultData = data?.candidates?.[0]?.content?.parts?.[0]?.text;
             } else {
+                const groqBody = { model: specificModel, messages: [{ role: 'user', content: finalPrompt }] };
+                
+                // 🔥 FORCE GROQ TO ONLY SPIT JSON (God Mode)
+                if (!isFollowUp) {
+                    groqBody.response_format = { type: 'json_object' };
+                }
+
                 const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: specificModel, messages: [{ role: 'user', content: finalPrompt }] })
+                    body: JSON.stringify(groqBody)
                 });
                 const data = await response.json();
                 if (data.error) throw new Error(data.error.message);
                 aiResultData = data?.choices?.[0]?.message?.content;
             }
         } catch (primaryError) {
-            console.log("Primary failed, using Fallback:", primaryError.message);
+            console.log("Primary failed, using Groq Fallback:", primaryError.message);
+            const fbBody = { model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: finalPrompt }] };
+            if (!isFollowUp) {
+                fbBody.response_format = { type: 'json_object' };
+            }
             const fbRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: finalPrompt }] })
+                body: JSON.stringify(fbBody)
             });
             const fbData = await fbRes.json();
             aiResultData = fbData?.choices?.[0]?.message?.content;
