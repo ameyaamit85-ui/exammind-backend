@@ -14,7 +14,6 @@ export default async function handler(req, res) {
             return res.status(500).json({ error: 'VERCEL_ERROR', details: 'API Keys missing' });
         }
 
-        // 🚀 Frontend ab bheja karega 'modelChoice' (groq ya gemini)
         const { promptText, isFollowUp, contextData, modelChoice } = req.body;
 
         let finalPrompt = promptText;
@@ -22,21 +21,43 @@ export default async function handler(req, res) {
             finalPrompt += `\n\nCRITICAL EXAMMIND DATABASE CONTEXT: ${contextData}. You MUST ground your explanation and formula using this verified data to ensure 100% accuracy.`;
         }
 
-        // 🧠 NAYA LOGIC: User Control > Auto Router
-        let useGemini = false;
-        if (modelChoice === 'gemini') {
-            useGemini = true;
-        } else if (modelChoice === 'groq') {
-            useGemini = false;
-        } else {
-            // Agar user ne select nahi kiya, tabhi Auto-Route karo
-            useGemini = /\d/.test(promptText) && /calculate|find|determine|value|equation|evaluate/i.test(promptText);
+        // =========================================================
+        // 🧠 THE EXACT MODEL ROUTER (FIXED FOR 3.1)
+        // =========================================================
+        let engine = 'groq'; 
+        let specificModel = 'llama-3.3-70b-versatile'; 
+
+        if (modelChoice === 'flash-lite') {
+            engine = 'gemini';
+            specificModel = 'gemini-3.1-flash-lite'; // 🔥 FIXED: EXACTLY 3.1
+        } 
+        else if (modelChoice === 'gemini') {
+            engine = 'gemini';
+            specificModel = 'gemini-3.1-flash'; // 🔥 UPGRADED PRO TO 3.1 AS WELL
+        } 
+        else if (modelChoice === 'llama' || modelChoice === 'llama-8b') {
+            engine = 'groq';
+            specificModel = 'llama-3.1-8b-instant';
+        } 
+        else if (modelChoice === 'gemma') {
+            engine = 'groq';
+            specificModel = 'gemma-3-2b-it'; // 🔥 EXACT GEMMA 3
+        } 
+        else if (modelChoice === 'auto') {
+            if (/\d/.test(promptText) && /calculate|find|determine|value|equation|evaluate/i.test(promptText)) {
+                engine = 'gemini';
+                specificModel = 'gemini-3.1-flash';
+            }
         }
 
+        // =========================================================
+        // 🚀 EXECUTION LOGIC
+        // =========================================================
         let aiResultData;
 
-        if (useGemini) {
-            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        if (engine === 'gemini') {
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${specificModel}:generateContent?key=${GEMINI_API_KEY}`;
+            
             const geminiResponse = await fetch(geminiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -47,12 +68,18 @@ export default async function handler(req, res) {
             });
 
             const geminiData = await geminiResponse.json();
+            
+            // Check for API errors
+            if (geminiData.error) {
+                 throw new Error(`Gemini API Error: ${geminiData.error.message}`);
+            }
+            
             aiResultData = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!aiResultData) throw new Error('Gemini returned an empty response.');
+            if (!aiResultData) throw new Error(`${specificModel} returned an empty response.`);
             
         } else {
             const groqBody = {
-                model: 'llama-3.3-70b-versatile', 
+                model: specificModel, 
                 messages: [{ role: 'user', content: finalPrompt }],
                 max_tokens: 3000
             };
@@ -65,11 +92,19 @@ export default async function handler(req, res) {
             });
 
             const groqData = await groqResponse.json();
+            
+            if (groqData.error) {
+                 throw new Error(`Groq API Error: ${groqData.error.message}`);
+            }
+            
             aiResultData = groqData?.choices?.[0]?.message?.content;
-            if (!aiResultData) throw new Error('Groq returned an empty response.');
+            if (!aiResultData) throw new Error(`${specificModel} returned an empty response.`);
         }
 
-        return res.status(200).json({ content: aiResultData, routedTo: useGemini ? 'Gemini 2.5 Flash' : 'Llama 3.3 70B' });
+        return res.status(200).json({ 
+            content: aiResultData, 
+            routedTo: specificModel 
+        });
 
     } catch (error) {
         return res.status(500).json({ error: 'ROUTING_ENGINE_CRASH', details: error.toString() });
