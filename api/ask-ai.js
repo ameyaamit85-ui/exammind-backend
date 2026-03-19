@@ -16,20 +16,15 @@ export default async function handler(req, res) {
             finalPrompt += `\n\nCRITICAL CONTEXT: ${contextData}. Use this verified data.`;
         }
 
-        // 🔥 STRICT INSTRUCTIONS TO PREVENT JSON CRASHES AND LATEX
-        finalPrompt += `\n\nCRITICAL FORMATTING RULES: 
-        1. DO NOT USE LaTeX (no \\frac, no \\partial). Use plain text (e.g., 1/r^2).
-        2. Ensure the output is strictly valid JSON without trailing commas.`;
-
-        // 🧠 EXACT MODEL ROUTING
+        // 🔥 THE ULTIMATE FIX: EXACT API ENDPOINTS
         let engine = 'groq'; 
         let specificModel = 'llama-3.3-70b-versatile'; 
 
         if (modelChoice === 'flash-lite') { 
             engine = 'gemini'; 
-            specificModel = 'gemini-1.5-flash-latest'; // Exact valid Google endpoint
+            specificModel = 'gemini-3.1-flash-lite-preview'; // EXACT NAME AS PER GOOGLE DOCS!
         } 
-        else if (modelChoice === 'llama-70b' || modelChoice === 'auto') { 
+        else if (modelChoice === 'llama-70b') { 
             engine = 'groq'; 
             specificModel = 'llama-3.3-70b-versatile'; 
         }
@@ -43,15 +38,15 @@ export default async function handler(req, res) {
                 body: JSON.stringify({ contents: [{ parts: [{ text: finalPrompt }] }] })
             });
             const data = await response.json();
-            if (data.error) throw new Error(`Google API: ${data.error.message}`);
+            if (data.error) throw new Error(data.error.message);
             aiResultData = data?.candidates?.[0]?.content?.parts?.[0]?.text;
         } else {
             const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: specificModel, messages: [{ role: 'user', content: finalPrompt }], response_format: isFollowUp ? null : { type: 'json_object' } })
+                body: JSON.stringify({ model: specificModel, messages: [{ role: 'user', content: finalPrompt }] })
             });
             const data = await response.json();
-            if (data.error) throw new Error(`Groq API: ${data.error.message}`);
+            if (data.error) throw new Error(data.error.message);
             aiResultData = data?.choices?.[0]?.message?.content;
         }
 
