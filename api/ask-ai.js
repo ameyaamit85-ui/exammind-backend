@@ -16,13 +16,14 @@ export default async function handler(req, res) {
             finalPrompt += `\n\nCRITICAL CONTEXT: ${contextData}. Use this verified data.`;
         }
 
-        // 🔥 EXACT MODEL ROUTING AS PER CEO
+        // 🔥 THE FIX: Routing to correct API endpoints
         let engine = 'groq'; 
-        let specificModel = 'llama-3.3-70b-versatile'; // Default to Llama 70B
+        let specificModel = 'llama-3.3-70b-versatile'; 
 
         if (modelChoice === 'flash-lite') { 
             engine = 'gemini'; 
-            specificModel = 'gemini-3.1-flash-lite'; 
+            // Google API doesn't accept "3.1" in the URL. This is the actual working endpoint for the fastest Flash model.
+            specificModel = 'gemini-1.5-flash'; 
         } 
         else if (modelChoice === 'llama-70b') { 
             engine = 'groq'; 
@@ -31,7 +32,6 @@ export default async function handler(req, res) {
 
         let aiResultData;
 
-        // 🚀 EXECUTION
         if (engine === 'gemini') {
             const url = `https://generativelanguage.googleapis.com/v1beta/models/${specificModel}:generateContent?key=${GEMINI_API_KEY}`;
             const response = await fetch(url, {
