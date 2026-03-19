@@ -11,43 +11,18 @@ export default async function handler(req, res) {
         const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
         const { promptText, isFollowUp, contextData, modelChoice } = req.body;
-        
-        let finalPrompt = "";
-
-        // 🔥 DYNAMIC PROMPTING BASED ON USER ACTION
-        if (!isFollowUp) {
-            // 1. MAIN SEARCH PROMPT (Needs strict JSON)
-            finalPrompt = `You are an Elite Professor and AI Copilot for GATE, JEE Advanced, and UPSC aspirants. The user asked: "${promptText}".\n`;
-            
-            if (contextData) {
-                finalPrompt += `CRITICAL CONTEXT: ${contextData}. Use this verified data.\n`;
-            }
-
-            finalPrompt += `
-            CRITICAL FORMATTING RULES (FAILURE IS NOT AN OPTION):
-            1. "answer": MUST be strictly max 2 to 5 words! ONLY the final numerical value with units, or the core concept name. NEVER write the full equation here.
-            2. "desc": Provide a highly professional, detailed 3 to 5 sentence explanation. Break down the core concept clearly.
-            3. "trap": Explain the common student mistake deeply in 2-3 sentences. Tell them WHY students fail here.
-            4. "formula": The core mathematical equation used.
-            5. DO NOT USE LaTeX. Use plain text (e.g., 1/r^2).
-            6. Output strictly valid JSON without trailing commas. Keys: hidden_scratchpad, formula, answer, confidence, is_match, desc, trap, steps.`;
-        
-        } else {
-            // 2. ELI5, REWRITE, & DOUBT PROMPT (Needs simple text, NO JSON)
-            finalPrompt = `You are an Elite Academic AI Tutor. 
-            Task: ${promptText}
-            
-            IMPORTANT INSTRUCTION: Output your response as standard, highly professional, plain text paragraphs. 
-            DO NOT output JSON format. DO NOT use JSON keys like 'hidden_scratchpad' or 'desc'. Keep it highly engaging and directly answer the request.`;
+        let finalPrompt = promptText;
+        if (contextData) {
+            finalPrompt += `\n\nCRITICAL CONTEXT: ${contextData}. Use this verified data.`;
         }
 
-        // 🧠 MODEL ROUTING
+        // 🔥 EXACT MODEL ROUTING EXACTLY AS PER CEO
         let engine = 'groq'; 
         let specificModel = 'llama-3.3-70b-versatile'; 
 
         if (modelChoice === 'flash-lite') { 
             engine = 'gemini'; 
-            specificModel = 'gemini-1.5-flash'; // Google's most stable fast API
+            specificModel = 'gemini-3.1-flash-lite-preview'; // DELETED 1.5 PERMANENTLY!
         } 
         else if (modelChoice === 'llama-70b') { 
             engine = 'groq'; 
@@ -67,34 +42,19 @@ export default async function handler(req, res) {
                 if (data.error) throw new Error(data.error.message);
                 aiResultData = data?.candidates?.[0]?.content?.parts?.[0]?.text;
             } else {
-                // For Groq: Only enforce JSON mode if it is the Main Search
-                const groqBody = {
-                    model: specificModel, 
-                    messages: [{ role: 'user', content: finalPrompt }]
-                };
-                if (!isFollowUp) {
-                    groqBody.response_format = { type: 'json_object' };
-                }
-
                 const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify(groqBody)
+                    body: JSON.stringify({ model: specificModel, messages: [{ role: 'user', content: finalPrompt }] })
                 });
                 const data = await response.json();
                 if (data.error) throw new Error(data.error.message);
                 aiResultData = data?.choices?.[0]?.message?.content;
             }
         } catch (primaryError) {
-            console.log("Primary failed, using Groq 8B Fallback:", primaryError.message);
-            const fbBody = {
-                model: 'llama-3.1-8b-instant', 
-                messages: [{ role: 'user', content: finalPrompt }]
-            };
-            if (!isFollowUp) { fbBody.response_format = { type: 'json_object' }; }
-
+            console.log("Primary failed, using Fallback:", primaryError.message);
             const fbRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify(fbBody)
+                body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: finalPrompt }] })
             });
             const fbData = await fbRes.json();
             aiResultData = fbData?.choices?.[0]?.message?.content;
