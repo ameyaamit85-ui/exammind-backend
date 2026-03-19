@@ -16,14 +16,13 @@ export default async function handler(req, res) {
             finalPrompt += `\n\nCRITICAL CONTEXT: ${contextData}. Use this verified data.`;
         }
 
-        // 🔥 THE FIX: Exact, Valid API Endpoints only
+        // 🔥 EXACT WORKING ENDPOINTS ONLY
         let engine = 'groq'; 
         let specificModel = 'llama-3.3-70b-versatile'; 
 
         if (modelChoice === 'flash-lite') { 
             engine = 'gemini'; 
-            // Google strictly requires '-latest' or '-001' to work in v1beta
-            specificModel = 'gemini-1.5-flash-latest'; 
+            specificModel = 'gemini-1.5-flash'; // Most stable, lowest latency endpoint
         } 
         else if (modelChoice === 'llama-70b') { 
             engine = 'groq'; 
@@ -32,36 +31,35 @@ export default async function handler(req, res) {
 
         let aiResultData;
 
-        if (engine === 'gemini') {
-            let url = `https://generativelanguage.googleapis.com/v1beta/models/${specificModel}:generateContent?key=${GEMINI_API_KEY}`;
-            let response = await fetch(url, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts: [{ text: finalPrompt }] }] })
-            });
-            let data = await response.json();
-
-            // 🛡️ GOOGLE FALLBACK: If flash fails, use fallback pro safely
-            if (data.error) {
-                console.log("Gemini Primary Failed. Retrying...", data.error.message);
-                url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${GEMINI_API_KEY}`;
-                response = await fetch(url, {
+        try {
+            if (engine === 'gemini') {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${specificModel}:generateContent?key=${GEMINI_API_KEY}`;
+                const response = await fetch(url, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ contents: [{ parts: [{ text: finalPrompt }] }] })
                 });
-                data = await response.json();
+                const data = await response.json();
+                if (data.error) throw new Error(data.error.message);
+                aiResultData = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            } else {
+                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: specificModel, messages: [{ role: 'user', content: finalPrompt }] })
+                });
+                const data = await response.json();
+                if (data.error) throw new Error(data.error.message);
+                aiResultData = data?.choices?.[0]?.message?.content;
             }
-
-            if (data.error) throw new Error(`Google API: ${data.error.message}`);
-            aiResultData = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            
-        } else {
-            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        } catch (primaryError) {
+            // 🛡️ ROCK-SOLID FALLBACK (NO GEMINI-PRO)
+            console.log("Primary failed, using Groq 8B Fallback:", primaryError.message);
+            const fbRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: specificModel, messages: [{ role: 'user', content: finalPrompt }] })
+                body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: finalPrompt }] })
             });
-            const data = await response.json();
-            if (data.error) throw new Error(`Groq API: ${data.error.message}`);
-            aiResultData = data?.choices?.[0]?.message?.content;
+            const fbData = await fbRes.json();
+            aiResultData = fbData?.choices?.[0]?.message?.content;
+            specificModel = 'llama-3.1-8b-instant (Fallback)';
         }
 
         if (!aiResultData) throw new Error("AI generated an empty response.");
