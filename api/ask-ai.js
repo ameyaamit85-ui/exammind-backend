@@ -12,28 +12,28 @@ export default async function handler(req, res) {
 
         const { promptText, isFollowUp, contextData, modelChoice } = req.body;
         
-        // 🔥 BILLION DOLLAR PROMPT ENGINEERING (GATE, JEE, UPSC LEVEL)
-        let finalPrompt = `You are an Elite Professor and AI Copilot for GATE (All Branches), JEE Advanced, and UPSC aspirants. The user asked: "${promptText}".\n`;
+        let finalPrompt = `You are an Elite Professor and AI Copilot for GATE, JEE Advanced, and UPSC aspirants. The user asked: "${promptText}".\n`;
         
         if (contextData) {
             finalPrompt += `CRITICAL CONTEXT: ${contextData}. Use this verified data.\n`;
         }
 
         finalPrompt += `
-        CRITICAL FORMATTING RULES (FAILURE IS NOT AN OPTION):
-        1. "answer": MUST be strictly max 2 to 5 words! ONLY the final numerical value, core formula, or key term. NEVER write sentences here.
-        2. "desc": Provide a highly professional, detailed 3-4 sentence explanation.
-        3. "trap": Explain the common student mistake deeply (at least 2-3 sentences). Don't just give 3 words. Tell them WHY students fail here.
+        CRITICAL FORMATTING RULES:
+        1. "answer": strictly max 2 to 5 words! ONLY the final numerical value or core concept.
+        2. "desc": Detailed 3-4 sentence explanation.
+        3. "trap": Explain the common student mistake deeply.
         4. "formula": The core mathematical equation used.
         5. DO NOT USE LaTeX. Use plain text (e.g., 1/r^2).
-        6. Output strictly valid JSON without trailing commas. Keys: hidden_scratchpad, formula, answer, confidence, is_match, desc, trap, steps (array of detailed strings).`;
+        6. Output strictly valid JSON without trailing commas. Keys: hidden_scratchpad, formula, answer, confidence, is_match, desc, trap, steps.`;
 
         let engine = 'groq'; 
         let specificModel = 'llama-3.3-70b-versatile'; 
 
+        // 🔥 LOCKED PERMANENTLY TO 3.1 PREVIEW
         if (modelChoice === 'flash-lite') { 
             engine = 'gemini'; 
-            specificModel = 'gemini-1.5-flash'; 
+            specificModel = 'gemini-3.1-flash-lite-preview'; 
         } 
         else if (modelChoice === 'llama-70b') { 
             engine = 'groq'; 
@@ -62,6 +62,7 @@ export default async function handler(req, res) {
                 aiResultData = data?.choices?.[0]?.message?.content;
             }
         } catch (primaryError) {
+            console.log("Primary failed, using Groq 8B Fallback:", primaryError.message);
             const fbRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: finalPrompt }] })
