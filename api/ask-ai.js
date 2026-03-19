@@ -15,7 +15,7 @@ export default async function handler(req, res) {
         let finalPrompt = "";
 
         if (!isFollowUp) {
-            finalPrompt = `You are an Elite Professor and AI Copilot for competitive exams. The user asked: "${promptText}".\n`;
+            finalPrompt = `You are an Elite Professor and AI Copilot for competitive exams like GATE, JEE Advanced, and UPSC. The user asked: "${promptText}".\n`;
             if (contextData) {
                 finalPrompt += `CRITICAL CONTEXT: ${contextData}. Use this verified data.\n`;
             }
@@ -26,7 +26,17 @@ export default async function handler(req, res) {
             3. "trap": Explain the common student mistake deeply.
             4. "formula": The core mathematical equation used.
             5. DO NOT USE LaTeX. Use plain text (e.g., 1/r^2).
-            6. Output strictly in JSON format. Your entire response must be a valid JSON object. Keys MUST BE EXACTLY: hidden_scratchpad, formula, answer, confidence, is_match, desc, trap, steps.`;
+            6. Output strictly in JSON format. Keys MUST BE EXACTLY: 
+            {
+              "hidden_scratchpad": "...",
+              "formula": "...",
+              "answer": "...",
+              "confidence": "High/Medium/Low",
+              "is_match": true/false,
+              "desc": "...",
+              "trap": "...",
+              "steps": ["step 1", "step 2"] // MUST BE A JSON ARRAY OF STRINGS. DO NOT OUTPUT A SINGLE STRING.
+            }`;
         } else {
             finalPrompt = `You are an Elite Academic AI Tutor. Task: "${promptText}"\nContext: "${contextData}"\nIMPORTANT: Output plain text ONLY. DO NOT output JSON. Provide a highly professional explanation.`;
         }
@@ -62,7 +72,7 @@ export default async function handler(req, res) {
                 const groqBody = { model: specificModel, messages: [{ role: 'user', content: finalPrompt }] };
                 if (!isFollowUp) groqBody.response_format = { type: 'json_object' };
 
-                const response = await fetch('[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)', {
+                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                     method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify(groqBody)
                 });
@@ -75,7 +85,7 @@ export default async function handler(req, res) {
             const fbBody = { model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: finalPrompt }] };
             if (!isFollowUp) fbBody.response_format = { type: 'json_object' };
             
-            const fbRes = await fetch('[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)', {
+            const fbRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify(fbBody)
             });
