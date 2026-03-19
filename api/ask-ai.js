@@ -16,50 +16,43 @@ export default async function handler(req, res) {
             finalPrompt += `\n\nCRITICAL CONTEXT: ${contextData}. Use this verified data.`;
         }
 
-        // 🔥 EXACT WORKING ENDPOINTS ONLY
+        // 🔥 STRICT INSTRUCTIONS TO PREVENT JSON CRASHES AND LATEX
+        finalPrompt += `\n\nCRITICAL FORMATTING RULES: 
+        1. DO NOT USE LaTeX (no \\frac, no \\partial). Use plain text (e.g., 1/r^2).
+        2. Ensure the output is strictly valid JSON without trailing commas.`;
+
+        // 🧠 EXACT MODEL ROUTING
         let engine = 'groq'; 
         let specificModel = 'llama-3.3-70b-versatile'; 
 
         if (modelChoice === 'flash-lite') { 
             engine = 'gemini'; 
-            specificModel = 'gemini-1.5-flash'; // Most stable, lowest latency endpoint
+            specificModel = 'gemini-1.5-flash-latest'; // Exact valid Google endpoint
         } 
-        else if (modelChoice === 'llama-70b') { 
+        else if (modelChoice === 'llama-70b' || modelChoice === 'auto') { 
             engine = 'groq'; 
             specificModel = 'llama-3.3-70b-versatile'; 
         }
 
         let aiResultData;
 
-        try {
-            if (engine === 'gemini') {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${specificModel}:generateContent?key=${GEMINI_API_KEY}`;
-                const response = await fetch(url, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ parts: [{ text: finalPrompt }] }] })
-                });
-                const data = await response.json();
-                if (data.error) throw new Error(data.error.message);
-                aiResultData = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            } else {
-                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                    method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: specificModel, messages: [{ role: 'user', content: finalPrompt }] })
-                });
-                const data = await response.json();
-                if (data.error) throw new Error(data.error.message);
-                aiResultData = data?.choices?.[0]?.message?.content;
-            }
-        } catch (primaryError) {
-            // 🛡️ ROCK-SOLID FALLBACK (NO GEMINI-PRO)
-            console.log("Primary failed, using Groq 8B Fallback:", primaryError.message);
-            const fbRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: finalPrompt }] })
+        if (engine === 'gemini') {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${specificModel}:generateContent?key=${GEMINI_API_KEY}`;
+            const response = await fetch(url, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: finalPrompt }] }] })
             });
-            const fbData = await fbRes.json();
-            aiResultData = fbData?.choices?.[0]?.message?.content;
-            specificModel = 'llama-3.1-8b-instant (Fallback)';
+            const data = await response.json();
+            if (data.error) throw new Error(`Google API: ${data.error.message}`);
+            aiResultData = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        } else {
+            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: specificModel, messages: [{ role: 'user', content: finalPrompt }], response_format: isFollowUp ? null : { type: 'json_object' } })
+            });
+            const data = await response.json();
+            if (data.error) throw new Error(`Groq API: ${data.error.message}`);
+            aiResultData = data?.choices?.[0]?.message?.content;
         }
 
         if (!aiResultData) throw new Error("AI generated an empty response.");
