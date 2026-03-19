@@ -16,47 +16,39 @@ export default async function handler(req, res) {
             finalPrompt += `\n\nCRITICAL CONTEXT: ${contextData}. Use this verified data.`;
         }
 
-        // 🧠 DYNAMIC ROUTING
+        // 🔥 EXACT MODEL ROUTING AS PER CEO
         let engine = 'groq'; 
-        let specificModel = 'llama-3.3-70b-versatile'; 
+        let specificModel = 'llama-3.3-70b-versatile'; // Default to Llama 70B
 
-        if (modelChoice === 'flash-lite') { engine = 'gemini'; specificModel = 'gemini-2.5-flash'; } // Using most stable flash version
-        else if (modelChoice === 'gemini-pro') { engine = 'gemini'; specificModel = 'gemini-1.5-pro'; } 
-        else if (modelChoice === 'llama') { engine = 'groq'; specificModel = 'llama-3.3-70b-versatile'; }
-        else if (modelChoice === 'llama-8b') { engine = 'groq'; specificModel = 'llama-3.1-8b-instant'; }
+        if (modelChoice === 'flash-lite') { 
+            engine = 'gemini'; 
+            specificModel = 'gemini-3.1-flash-lite'; 
+        } 
+        else if (modelChoice === 'llama-70b') { 
+            engine = 'groq'; 
+            specificModel = 'llama-3.3-70b-versatile'; 
+        }
 
         let aiResultData;
 
-        // 🚀 EXECUTION WITH FALLBACK
-        try {
-            if (engine === 'gemini') {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${specificModel}:generateContent?key=${GEMINI_API_KEY}`;
-                const response = await fetch(url, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ contents: [{ parts: [{ text: finalPrompt }] }] })
-                });
-                const data = await response.json();
-                if (data.error) throw new Error(data.error.message);
-                aiResultData = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            } else {
-                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                    method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ model: specificModel, messages: [{ role: 'user', content: finalPrompt }] })
-                });
-                const data = await response.json();
-                if (data.error) throw new Error(data.error.message);
-                aiResultData = data?.choices?.[0]?.message?.content;
-            }
-        } catch (primaryError) {
-            console.log("Primary Model Failed, using Fallback Llama 8B:", primaryError.message);
-            // 🛡️ FALLBACK TO FAST, FREE, STABLE MODEL IF PRIMARY FAILS
-            const fallbackRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-                method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: finalPrompt }] })
+        // 🚀 EXECUTION
+        if (engine === 'gemini') {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${specificModel}:generateContent?key=${GEMINI_API_KEY}`;
+            const response = await fetch(url, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: [{ parts: [{ text: finalPrompt }] }] })
             });
-            const fallbackData = await fallbackRes.json();
-            aiResultData = fallbackData?.choices?.[0]?.message?.content;
-            specificModel = 'llama-3.1-8b-instant (Fallback)';
+            const data = await response.json();
+            if (data.error) throw new Error(data.error.message);
+            aiResultData = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        } else {
+            const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: specificModel, messages: [{ role: 'user', content: finalPrompt }] })
+            });
+            const data = await response.json();
+            if (data.error) throw new Error(data.error.message);
+            aiResultData = data?.choices?.[0]?.message?.content;
         }
 
         if (!aiResultData) throw new Error("AI generated an empty response.");
