@@ -15,7 +15,7 @@ export default async function handler(req, res) {
         let finalPrompt = "";
 
         if (!isFollowUp) {
-            finalPrompt = `You are an Elite Professor and AI Copilot for GATE, JEE Advanced, and UPSC aspirants. The user asked: "${promptText}".\n`;
+            finalPrompt = `You are an Elite Professor and AI Copilot for competitive exams. The user asked: "${promptText}".\n`;
             if (contextData) {
                 finalPrompt += `CRITICAL CONTEXT: ${contextData}. Use this verified data.\n`;
             }
@@ -26,7 +26,7 @@ export default async function handler(req, res) {
             3. "trap": Explain the common student mistake deeply.
             4. "formula": The core mathematical equation used.
             5. DO NOT USE LaTeX. Use plain text (e.g., 1/r^2).
-            6. Output strictly valid JSON without trailing commas. Keys MUST BE EXACTLY: hidden_scratchpad, formula, answer, confidence, is_match, desc, trap, steps.`;
+            6. Output strictly in JSON format. Your entire response must be a valid JSON object. Keys MUST BE EXACTLY: hidden_scratchpad, formula, answer, confidence, is_match, desc, trap, steps.`;
         } else {
             finalPrompt = `You are an Elite Academic AI Tutor. Task: "${promptText}"\nContext: "${contextData}"\nIMPORTANT: Output plain text ONLY. DO NOT output JSON. Provide a highly professional explanation.`;
         }
@@ -48,13 +48,8 @@ export default async function handler(req, res) {
         try {
             if (engine === 'gemini') {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/${specificModel}:generateContent?key=${GEMINI_API_KEY}`;
-                
                 const reqBody = { contents: [{ parts: [{ text: finalPrompt }] }] };
-                
-                // 🔥 FORCE GOOGLE TO ONLY SPIT JSON (God Mode)
-                if (!isFollowUp) {
-                    reqBody.generationConfig = { responseMimeType: "application/json" };
-                }
+                if (!isFollowUp) reqBody.generationConfig = { responseMimeType: "application/json" };
 
                 const response = await fetch(url, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -65,13 +60,9 @@ export default async function handler(req, res) {
                 aiResultData = data?.candidates?.[0]?.content?.parts?.[0]?.text;
             } else {
                 const groqBody = { model: specificModel, messages: [{ role: 'user', content: finalPrompt }] };
-                
-                // 🔥 FORCE GROQ TO ONLY SPIT JSON (God Mode)
-                if (!isFollowUp) {
-                    groqBody.response_format = { type: 'json_object' };
-                }
+                if (!isFollowUp) groqBody.response_format = { type: 'json_object' };
 
-                const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                const response = await fetch('[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)', {
                     method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify(groqBody)
                 });
@@ -82,10 +73,9 @@ export default async function handler(req, res) {
         } catch (primaryError) {
             console.log("Primary failed, using Groq Fallback:", primaryError.message);
             const fbBody = { model: 'llama-3.1-8b-instant', messages: [{ role: 'user', content: finalPrompt }] };
-            if (!isFollowUp) {
-                fbBody.response_format = { type: 'json_object' };
-            }
-            const fbRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            if (!isFollowUp) fbBody.response_format = { type: 'json_object' };
+            
+            const fbRes = await fetch('[https://api.groq.com/openai/v1/chat/completions](https://api.groq.com/openai/v1/chat/completions)', {
                 method: 'POST', headers: { 'Authorization': `Bearer ${GROQ_API_KEY}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify(fbBody)
             });
