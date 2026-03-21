@@ -20,6 +20,7 @@ module.exports = async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (req.method === 'OPTIONS') return res.status(200).end();
+    // 🛡️ Always return 200 OK with JSON to prevent Chrome Ext "Token A" HTML crashes
     if (req.method !== 'POST') return res.status(200).json({ error: true, details: 'Only POST allowed' });
 
     try {
@@ -27,7 +28,6 @@ module.exports = async function handler(req, res) {
         if (!promptText) throw new Error("Prompt text is missing.");
 
         const GROQ_API_KEY = process.env.GROQ_API_KEY;
-        // 🔥 FIX 1: Accepts BOTH naming conventions for the Gemini API Key
         const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATION_API_KEY;
 
         if (!GROQ_API_KEY) throw new Error("CRITICAL: GROQ_API_KEY missing in Vercel.");
@@ -41,7 +41,6 @@ module.exports = async function handler(req, res) {
         let finalResponseText = "";
         let engineUsed = "";
 
-        // 🔥 FIX 2: THE MASTER UI-PRESERVATION PROMPT
         const masterJSONPrompt = `You are an elite Engineering Copilot. 
 User Query: "${promptText}"
 Database Context: ${contextData || "None"}
@@ -64,9 +63,10 @@ OUTPUT STRICTLY IN THIS JSON FORMAT (NO MARKDOWN):
 
         if (modelChoice === 'flash-lite') {
             if (!GEMINI_API_KEY) throw new Error("CRITICAL: GEMINI_API_KEY missing in Vercel Env Variables.");
-            engineUsed = "Gemini 1.5 Flash (Deep Reasoning)";
+            engineUsed = "Gemini 3.1 Flash Lite";
             const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            // 🔥 STRICTLY USING EXACT MODEL STRING
+            const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
 
             const geminiPrompt = isFollowUp 
                 ? `You are an elite tutor. Query: "${promptText}". Context: ${contextData}. Output plain text only. No JSON.`
