@@ -5,7 +5,7 @@
     "cors": "^2.8.5",
     "@supabase/supabase-js": "^2.0.0",
     "mathjs": "^11.8.0",
-    "@google/generative-ai": "^0.11.0", // True Gemini deep reasoning SDK
+    "@google/generative-ai": "^0.11.0", 
     "mathjs": "^11.11.0"
   }
 }
