@@ -2,7 +2,6 @@ const { createClient } = require('@supabase/supabase-js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 module.exports = async function handler(req, res) {
-    // Sirf GET request allow karenge taaki browser se hit kar sakein
     if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET request in browser' });
 
     try {
@@ -14,13 +13,12 @@ module.exports = async function handler(req, res) {
             return res.status(400).json({ error: "Missing Keys in Vercel (Supabase or Gemini)." });
         }
 
-        // Initialize Clients
         const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        // 🔥 Using Google's specialized embedding model
-        const embedModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
+        
+        // 🔥 THE FIX: Using Google's latest active embedding model
+        const embedModel = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
 
-        // 1. Fetch current database from your GitHub
         const DB_URL = "https://raw.githubusercontent.com/ameyaamit85-ui/exammind-data/refs/heads/main/database.json";
         const dbResponse = await fetch(DB_URL);
         const database = await dbResponse.json();
@@ -28,17 +26,21 @@ module.exports = async function handler(req, res) {
         let successCount = 0;
         let errors = [];
 
-        // 2. Vectorize and Push to Supabase
         for (const item of database) {
             try {
-                // Ye AI ke samajhne ke liye context string hai
                 const textToEmbed = `Concept: ${item.name || item.problem}. Description: ${item.desc || ''}. Formula: ${item.formula_used || item.formula || ''}. Keywords: ${item.keywords ? item.keywords.join(', ') : ''}`;
 
-                // Gemini se is text ka "Vector/Meaning" nikalo
                 const result = await embedModel.embedContent(textToEmbed);
-                const embedding = result.embedding.values;
+                let embedding = result.embedding.values;
 
-                // Supabase ki nayi table mein push karo
+                // 🔥 MATRYOSHKA COMPRESSION: Downscale to 768 to perfectly fit your Supabase table
+                if (embedding.length > 768) {
+                    embedding = embedding.slice(0, 768);
+                    // Re-normalize the vector for accurate cosine similarity
+                    const mag = Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0));
+                    embedding = embedding.map(val => val / mag);
+                }
+
                 const { error } = await supabase
                     .from('verified_concepts')
                     .insert({
@@ -55,14 +57,13 @@ module.exports = async function handler(req, res) {
                 if (error) throw error;
                 successCount++;
 
-                // Free tier limit bachane ke liye chota sa pause (500ms)
+                // Free tier limit bachane ke liye pause (500ms)
                 await new Promise(r => setTimeout(r, 500));
             } catch (err) {
-                errors.push({ item: item.name, error: err.message });
+                errors.push({ item: item.name || item.problem, error: err.message });
             }
         }
 
-        // Return final report
         return res.status(200).json({
             success: true,
             message: `MISSION SUCCESS! 🔥 ${successCount} concepts vectorized and uploaded to Supabase.`,
