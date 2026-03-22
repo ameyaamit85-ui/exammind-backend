@@ -14,6 +14,7 @@ function extractCleanJSON(rawText) {
     }
 }
 
+// Helper to convert base64 image data for Gemini Vision
 function fileToGenerativePart(base64Data) {
     const parts = base64Data.split(';');
     const mimeType = parts[0].split(':')[1];
@@ -54,16 +55,16 @@ module.exports = async function handler(req, res) {
         let dynamicContext = "";
         let matchedFormula = null;
 
-       // ==========================================
-        // 📸 PHASE 0: IMAGE VISION PROCESSING
+        // ==========================================
+        // 📸 PHASE 0: IMAGE VISION PROCESSING (THE SNIP TOOL)
         // ==========================================
         if (isImage && imageData) {
             console.log("📸 Vision Engine Triggered!");
-            engineUsed = "Gemini 3.1 Flash Lite"; // Name updated for UI
+            engineUsed = "Gemini 3.1 Flash Lite Preview (Vision)";
             const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             
-            // 🔥 THE FIX: Using the EXACT model name from your dashboard screenshot!
-            const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
+            // 🔥 THE MC BSDK FIX: Model name updated to exact string!
+            const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
 
             const imagePart = fileToGenerativePart(imageData);
             
@@ -85,9 +86,10 @@ module.exports = async function handler(req, res) {
 
             const result = await model.generateContent([visionPrompt, imagePart]);
             finalResponseText = result.response.text();
-        }
+        } 
+        
         // ==========================================
-        // 🔍 PHASE 1: SEMANTIC VECTOR RETRIEVAL
+        // 🔍 PHASE 1: SEMANTIC VECTOR RETRIEVAL (Text Only)
         // ==========================================
         else if (!isFollowUp) {
             try {
@@ -106,17 +108,19 @@ module.exports = async function handler(req, res) {
 
                 const { data: matchedConcepts, error: rpcError } = await supabase.rpc('match_concepts', {
                     query_embedding: queryEmbedding,
-                    match_threshold: 0.3,
+                    match_threshold: 0.3, 
                     match_count: 2
                 });
 
                 if (!rpcError && matchedConcepts && matchedConcepts.length > 0) {
                     dynamicContext = matchedConcepts.map(c => `Concept: ${c.name}. Formula: ${c.formula_used}. Description: ${c.desc_text}`).join(" | ");
                     matchedFormula = matchedConcepts[0].formula_used;
+                    console.log("Vector RAG Success: Found matches in Supabase!");
                 } else {
                     dynamicContext = contextData || "None";
                 }
             } catch (vecErr) {
+                console.log("Vector Search Bypassed/Failed:", vecErr.message);
                 dynamicContext = contextData || "None";
             }
         } else {
@@ -124,18 +128,18 @@ module.exports = async function handler(req, res) {
         }
 
         // ==========================================
-        // 🧠 PHASE 2: TEXT GENERATION
+        // 🧠 PHASE 2: MASTER PROMPT & TEXT GENERATION
         // ==========================================
         if (!isImage) { 
             const masterJSONPrompt = `You are an elite Engineering Copilot. 
 User Query: "${promptText}"
-Verified Knowledge Context: ${dynamicContext}
+Verified Knowledge Database Context: ${dynamicContext}
 
 CRITICAL RULES FOR OUTPUT:
 1. If theory: Put explanation in "desc", leave "final_answer" empty.
 2. If numerical: Put calculated result in "final_answer".
 3. DO NOT hallucinate formulas. Use provided context if available.
-${computedAnswer !== null ? `4. CRITICAL: The exact math answer is **${computedAnswer}**. USE THIS NUMERIC VALUE.` : ''}
+${computedAnswer !== null ? `4. CRITICAL: The exact calculated math answer is **${computedAnswer}**. USE THIS NUMERIC VALUE.` : ''}
 
 OUTPUT STRICTLY IN THIS JSON FORMAT (NO MARKDOWN, DO NOT WRAP IN BACKTICKS):
 {
@@ -148,12 +152,12 @@ OUTPUT STRICTLY IN THIS JSON FORMAT (NO MARKDOWN, DO NOT WRAP IN BACKTICKS):
 }`;
 
             if (modelChoice === 'flash-lite') {
-                engineUsed = "Gemini 1.5 Flash";
+                engineUsed = "Gemini 3.1 Flash Lite Preview";
                 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-                // 🔥 BACK TO STABLE MODEL
-                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+                // 🔥 THE MC BSDK FIX: Model name updated to exact string!
+                const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
 
-                const geminiPrompt = isFollowUp ? `You are a tutor. Query: "${promptText}". Context: ${dynamicContext}. Output plain text only. No JSON.` : masterJSONPrompt;
+                const geminiPrompt = isFollowUp ? `You are an elite tutor. Query: "${promptText}". Context: ${dynamicContext}. Output plain text only. No JSON.` : masterJSONPrompt;
                 const result = await model.generateContent(geminiPrompt);
                 finalResponseText = result.response.text();
 
@@ -179,10 +183,10 @@ OUTPUT STRICTLY IN THIS JSON FORMAT (NO MARKDOWN, DO NOT WRAP IN BACKTICKS):
                             computedAnswer = evaluate(formulaToUse, extractJSON.vars);
                             computedAnswer = Math.round(computedAnswer * 10000) / 10000;
                         }
-                    } catch (err) {}
+                    } catch (err) { console.log("Math engine bypassed safely."); }
                 }
 
-                const llamaPrompt = isFollowUp ? `You are a tutor. Query: "${promptText}". Context: ${dynamicContext}. Output plain text. NO JSON.` : masterJSONPrompt;
+                const llamaPrompt = isFollowUp ? `You are an elite tutor. Query: "${promptText}". Context: ${dynamicContext}. Output plain text. NO JSON.` : masterJSONPrompt;
                 const finalRes = await fetch(GROQ_URL, {
                     method: "POST", headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
                     body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "system", content: llamaPrompt }, { role: "user", content: promptText }], temperature: 0.1 })
@@ -194,9 +198,6 @@ OUTPUT STRICTLY IN THIS JSON FORMAT (NO MARKDOWN, DO NOT WRAP IN BACKTICKS):
             }
         }
 
-        // ==========================================
-        // 🛡️ PHASE 4: STRICT JSON FORMATTING
-        // ==========================================
         if (!isFollowUp) {
             const validJSON = extractCleanJSON(finalResponseText);
             finalResponseText = JSON.stringify(validJSON); 
