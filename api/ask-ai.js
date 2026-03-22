@@ -54,16 +54,16 @@ module.exports = async function handler(req, res) {
         let dynamicContext = "";
         let matchedFormula = null;
 
-        // ==========================================
+       // ==========================================
         // 📸 PHASE 0: IMAGE VISION PROCESSING
         // ==========================================
         if (isImage && imageData) {
             console.log("📸 Vision Engine Triggered!");
-            engineUsed = "Gemini 1.5 Vision";
+            engineUsed = "Gemini 3.1 Flash Lite"; // Name updated for UI
             const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             
-            // 🔥 BACK TO STABLE MODEL (No more 404 error)
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+            // 🔥 THE FIX: Using the EXACT model name from your dashboard screenshot!
+            const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite" });
 
             const imagePart = fileToGenerativePart(imageData);
             
@@ -85,8 +85,7 @@ module.exports = async function handler(req, res) {
 
             const result = await model.generateContent([visionPrompt, imagePart]);
             finalResponseText = result.response.text();
-        } 
-        
+        }
         // ==========================================
         // 🔍 PHASE 1: SEMANTIC VECTOR RETRIEVAL
         // ==========================================
