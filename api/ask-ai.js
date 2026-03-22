@@ -14,7 +14,6 @@ function extractCleanJSON(rawText) {
     }
 }
 
-// Helper to convert base64 image data for Gemini Vision
 function fileToGenerativePart(base64Data) {
     const parts = base64Data.split(';');
     const mimeType = parts[0].split(':')[1];
@@ -63,8 +62,8 @@ module.exports = async function handler(req, res) {
             engineUsed = "Gemini 1.5 Vision";
             const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
             
-            // 🔥 FIX: Added '-latest' to fix the 404 API Not Found Error
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+            // 🔥 BACK TO STABLE MODEL (No more 404 error)
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
             const imagePart = fileToGenerativePart(imageData);
             
@@ -152,8 +151,8 @@ OUTPUT STRICTLY IN THIS JSON FORMAT (NO MARKDOWN, DO NOT WRAP IN BACKTICKS):
             if (modelChoice === 'flash-lite') {
                 engineUsed = "Gemini 1.5 Flash";
                 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-                // 🔥 FIX: Using robust latest string
-                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+                // 🔥 BACK TO STABLE MODEL
+                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
                 const geminiPrompt = isFollowUp ? `You are a tutor. Query: "${promptText}". Context: ${dynamicContext}. Output plain text only. No JSON.` : masterJSONPrompt;
                 const result = await model.generateContent(geminiPrompt);
