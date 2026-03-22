@@ -14,6 +14,20 @@ function extractCleanJSON(rawText) {
     }
 }
 
+// Helper to convert base64 image data for Gemini Vision
+function fileToGenerativePart(base64Data) {
+    // Split "data:image/jpeg;base64,/9j/4AAQ..." into mimeType and data
+    const parts = base64Data.split(';');
+    const mimeType = parts[0].split(':')[1];
+    const data = parts[1].split(',')[1];
+    return {
+        inlineData: {
+            data: data,
+            mimeType: mimeType
+        },
+    };
+}
+
 module.exports = async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -24,8 +38,8 @@ module.exports = async function handler(req, res) {
     if (req.method !== 'POST') return res.status(200).json({ error: true, details: 'Only POST allowed' });
 
     try {
-        const { promptText, contextData, modelChoice, isFollowUp } = req.body || {};
-        if (!promptText) throw new Error("Prompt text is missing.");
+        const { promptText, contextData, modelChoice, isFollowUp, isImage, imageData } = req.body || {};
+        if (!promptText && !isImage) throw new Error("Prompt text or Image is missing.");
 
         const GROQ_API_KEY = process.env.GROQ_API_KEY;
         const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATION_API_KEY;
@@ -43,12 +57,46 @@ module.exports = async function handler(req, res) {
         let matchedFormula = null;
 
         // ==========================================
-        // 🔍 PHASE 1: SEMANTIC VECTOR RETRIEVAL (TRUE RAG)
+        // 📸 PHASE 0: IMAGE VISION PROCESSING (THE SNIP TOOL)
         // ==========================================
-        if (!isFollowUp) {
+        if (isImage && imageData) {
+            console.log("📸 Vision Engine Triggered!");
+            engineUsed = "Gemini 1.5 Flash (Vision)";
+            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+            // Must use a model that supports vision
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+            const imagePart = fileToGenerativePart(imageData);
+            
+            const visionPrompt = `You are an elite Engineering Copilot. 
+            I have provided an image of an engineering question or concept.
+            
+            Your Task:
+            1. Carefully read and extract the question from the image.
+            2. Solve it step-by-step.
+            3. OUTPUT STRICTLY IN THIS JSON FORMAT (NO MARKDOWN, NO CONVERSATION):
+            {
+                "name": "Short Topic Name (e.g. Heat Transfer Calc)",
+                "desc": "Explanation of the theory behind this problem.",
+                "formula_used": "Plain text formula used to solve it",
+                "solution_steps": ["Step 1...", "Step 2..."],
+                "final_answer": "Final numeric answer with units",
+                "trap": "🚨 Mention a common mistake students make solving this"
+            }`;
+
+            const result = await model.generateContent([visionPrompt, imagePart]);
+            finalResponseText = result.response.text();
+            
+            // Skip the rest of the RAG/Groq logic and go straight to JSON formatting
+        } 
+        
+        // ==========================================
+        // 🔍 PHASE 1: SEMANTIC VECTOR RETRIEVAL (TRUE RAG) - Text Only
+        // ==========================================
+        else if (!isFollowUp) {
             try {
                 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-                const embedModel = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
+                const embedModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
                 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
                 // 1. Embed user query
@@ -86,9 +134,10 @@ module.exports = async function handler(req, res) {
         }
 
         // ==========================================
-        // 🧠 PHASE 2: MASTER PROMPT & GENERATION
+        // 🧠 PHASE 2: MASTER PROMPT & TEXT GENERATION
         // ==========================================
-        const masterJSONPrompt = `You are an elite Engineering Copilot. 
+        if (!isImage) { // Only run text generation if it wasn't an image request
+            const masterJSONPrompt = `You are an elite Engineering Copilot. 
 User Query: "${promptText}"
 Verified Knowledge Database Context: ${dynamicContext}
 
@@ -108,60 +157,61 @@ OUTPUT STRICTLY IN THIS JSON FORMAT (NO MARKDOWN, DO NOT WRAP IN BACKTICKS):
     "trap": "🚨 Mention a common mistake (or empty)"
 }`;
 
-        // ==========================================
-        // ⚡ PHASE 3: ROUTING & MATH SANDBOX
-        // ==========================================
-        if (modelChoice === 'flash-lite') {
-            engineUsed = "Gemini 3.1 Flash Lite";
-            const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-            const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
+            // ==========================================
+            // ⚡ PHASE 3: ROUTING & MATH SANDBOX
+            // ==========================================
+            if (modelChoice === 'flash-lite') {
+                engineUsed = "Gemini 1.5 Flash"; // Upgraded for better math
+                const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-            const geminiPrompt = isFollowUp 
-                ? `You are an elite tutor. Query: "${promptText}". Context: ${dynamicContext}. Output plain text only. No JSON.`
-                : masterJSONPrompt;
+                const geminiPrompt = isFollowUp 
+                    ? `You are an elite tutor. Query: "${promptText}". Context: ${dynamicContext}. Output plain text only. No JSON.`
+                    : masterJSONPrompt;
 
-            const result = await model.generateContent(geminiPrompt);
-            finalResponseText = result.response.text();
+                const result = await model.generateContent(geminiPrompt);
+                finalResponseText = result.response.text();
 
-        } else {
-            engineUsed = "Llama 3.3 70B (Groq)";
-            const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
+            } else {
+                engineUsed = "Llama 3.3 70B (Groq)";
+                const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-            // 🧮 Safe Math Extraction using the Best Formula from Vector Search
-            let formulaToUse = matchedFormula || (contextData ? JSON.parse(contextData).formula_used : null);
+                // 🧮 Safe Math Extraction using the Best Formula from Vector Search
+                let formulaToUse = matchedFormula || (contextData ? JSON.parse(contextData).formula_used : null);
 
-            if (!isFollowUp && formulaToUse && formulaToUse.length > 2) {
-                const extractorPrompt = `Check if this formula: "${formulaToUse}" applies to the numerical problem: "${promptText}". 
-                If NOT applicable, output: {"applicable": false}. 
-                If YES, extract variables safely to SI units and output: {"applicable": true, "vars": {"k": 400, "r": 0.1}}. NO EXTRA TEXT.`;
-                
-                try {
-                    const extractRes = await fetch(GROQ_URL, {
-                        method: "POST", headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
-                        body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "system", content: extractorPrompt }], temperature: 0 })
-                    });
-                    const extractData = await extractRes.json();
-                    const extractJSON = extractCleanJSON(extractData.choices[0].message.content);
+                if (!isFollowUp && formulaToUse && formulaToUse.length > 2) {
+                    const extractorPrompt = `Check if this formula: "${formulaToUse}" applies to the numerical problem: "${promptText}". 
+                    If NOT applicable, output: {"applicable": false}. 
+                    If YES, extract variables safely to SI units and output: {"applicable": true, "vars": {"k": 400, "r": 0.1}}. NO EXTRA TEXT.`;
+                    
+                    try {
+                        const extractRes = await fetch(GROQ_URL, {
+                            method: "POST", headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
+                            body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "system", content: extractorPrompt }], temperature: 0 })
+                        });
+                        const extractData = await extractRes.json();
+                        const extractJSON = extractCleanJSON(extractData.choices[0].message.content);
 
-                    if (extractJSON.applicable && extractJSON.vars) {
-                        computedAnswer = evaluate(formulaToUse, extractJSON.vars);
-                        computedAnswer = Math.round(computedAnswer * 10000) / 10000;
-                    }
-                } catch (err) { console.log("Math engine bypassed safely."); }
+                        if (extractJSON.applicable && extractJSON.vars) {
+                            computedAnswer = evaluate(formulaToUse, extractJSON.vars);
+                            computedAnswer = Math.round(computedAnswer * 10000) / 10000;
+                        }
+                    } catch (err) { console.log("Math engine bypassed safely."); }
+                }
+
+                const llamaPrompt = isFollowUp
+                    ? `You are an elite tutor. Query: "${promptText}". Context: ${dynamicContext}. Output plain text. NO JSON.`
+                    : masterJSONPrompt;
+
+                const finalRes = await fetch(GROQ_URL, {
+                    method: "POST", headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "system", content: llamaPrompt }, { role: "user", content: promptText }], temperature: 0.1 })
+                });
+
+                const finalData = await finalRes.json();
+                if (finalData.error) throw new Error(finalData.error.message);
+                finalResponseText = finalData.choices[0].message.content;
             }
-
-            const llamaPrompt = isFollowUp
-                ? `You are an elite tutor. Query: "${promptText}". Context: ${dynamicContext}. Output plain text. NO JSON.`
-                : masterJSONPrompt;
-
-            const finalRes = await fetch(GROQ_URL, {
-                method: "POST", headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [{ role: "system", content: llamaPrompt }, { role: "user", content: promptText }], temperature: 0.1 })
-            });
-
-            const finalData = await finalRes.json();
-            if (finalData.error) throw new Error(finalData.error.message);
-            finalResponseText = finalData.choices[0].message.content;
         }
 
         // ==========================================
