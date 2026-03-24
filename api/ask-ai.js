@@ -103,8 +103,11 @@ module.exports = async (req, res) => {
         // 🔥 Passing branch to RAG function
         const verifiedContext = await fetchVerifiedContext(promptText, currentBranch);
         
-        // 🔥 Dynamic System Prompt Based on Branch
-        const SYSTEM_PROMPT = `You are an elite ${currentBranch} Engineering AI. Output ONLY valid JSON.
+        // 🔥 OP SYSTEM PROMPT: Force AI to verify and correct flawed data
+        const SYSTEM_PROMPT = `You are an elite ${currentBranch} Engineering AI. 
+        Use the provided VERIFIED KNOWLEDGE BASE as your primary reference. 
+        HOWEVER, if you detect an obvious mathematical error, formula mismatch, or violation of core engineering principles in the knowledge base, YOU MUST CORRECT IT in your final output. Trust your fundamental training over flawed data.
+        Output ONLY valid JSON.
         Format: {"name":"Topic","desc":"Explanation","formula":"$$ LaTeX $$","steps":["Step 1"],"answer":"Final Answer","trap":"Common mistake"}`;
         
         const finalPrompt = `${SYSTEM_PROMPT}\n\n${verifiedContext}\n\nSolve this query dynamically based on engineering principles: "${promptText}"`;
