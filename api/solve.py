@@ -3,10 +3,16 @@ from flask_cors import CORS
 import sympy as sp
 
 app = Flask(__name__)
-CORS(app)
+# Sabko allow karne ke liye wildcard lagaya hai
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-@app.route('/api/solve', methods=['POST'])
+# Yahan dhyaan se dekh, POST ke sath OPTIONS bhi add kiya hai
+@app.route('/api/solve', methods=['POST', 'OPTIONS'])
 def solve_math():
+    # Agar browser security check (OPTIONS) bheje, toh khushi-khushi OK bol do
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200
+
     try:
         data = request.get_json()
         expression = data.get('expression', '')
