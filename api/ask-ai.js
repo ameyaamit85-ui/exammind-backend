@@ -46,16 +46,18 @@ module.exports = async (req, res) => {
     try {
         const { promptText, isFollowUp, contextData, modelChoice, isImage, imageData } = req.body;
 
-        // 📸 1. VISION AI (FIXED: Using STABLE Gemini 2.5 Flash to prevent 503 Server Errors)
+        // 📸 1. VISION AI (Using Stable Gemini 2.5 Flash)
         if (isImage && imageData) {
             if (!genAI) return res.status(400).json({ error: true, details: "Gemini API key missing." });
             
-            const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
+            const model = genAI.getGenerativeModel({ 
+                model: "gemini-2.5-flash",
+                generationConfig: { responseMimeType: "application/json" } // STRICT JSON
+            }); 
             const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
             const imagePart = { inlineData: { data: base64Data, mimeType: "image/jpeg" } };
 
-            const imagePrompt = `You are a strict Engineering Solver. Look at the problem and SOLVE IT.
-            OUTPUT ONLY VALID JSON.
+            const imagePrompt = `You are an Engineering Solver. SOLVE the mathematical problem in the image.
             {
                 "name": "Topic Title",
                 "problem": "Question text",
@@ -69,7 +71,7 @@ module.exports = async (req, res) => {
             return res.status(200).json({ content: result.response.text(), routedTo: "Gemini 2.5 Flash (Vision)" });
         }
 
-        // 🧠 2. FOLLOW-UP LOGIC (ELI5/DEEP DIVE -> STRICTLY LLAMA 70B)
+        // 🧠 2. FOLLOW-UP LOGIC (ELI5/DEEP DIVE -> STRICTLY LLAMA 70B PLAIN TEXT)
         if (isFollowUp) {
             const followUpPrompt = `Context: ${contextData}\nUser Request: ${promptText}\nProvide a clear, plain-text response. Do NOT output JSON. Use LaTeX $$ for math if needed.`;
             const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -85,20 +87,21 @@ module.exports = async (req, res) => {
         }
 
         // 🚀 3. MAIN SOLVER LOGIC (DYNAMIC GEMINI ROUTING)
-        let actualModelStr = "gemini-2.5-flash"; // Default Fallback
+        let actualModelStr = "gemini-2.5-flash"; 
         if (modelChoice === "gemini-3.1-flash-lite") actualModelStr = "gemini-3.1-flash-lite-preview";
         else if (modelChoice === "gemini-3-flash") actualModelStr = "gemini-3.0-flash";
         else if (modelChoice === "gemini-2.5-flash") actualModelStr = "gemini-2.5-flash";
         else if (modelChoice === "gemini-2.5-flash-lite") actualModelStr = "gemini-2.5-flash-lite";
 
         const verifiedContext = await fetchVerifiedContext(promptText);
-        
-        const SYSTEM_PROMPT = `You are an elite Engineering AI. Output ONLY valid JSON.
+        const SYSTEM_PROMPT = `You are an elite Engineering AI.
         Format: {"name":"Topic","desc":"Explanation","formula":"$$ LaTeX $$","steps":["Step 1"],"answer":"Final Answer","trap":"Common mistake"}`;
+        const finalPrompt = `${SYSTEM_PROMPT}\n\n${verifiedContext}\n\nSolve this query dynamically based on engineering principles: "${promptText}"`;
         
-        const finalPrompt = `${SYSTEM_PROMPT}\n\n${verifiedContext}\n\nSolve this query dynamically based on engineering principles: "${promptText}"\nIMPORTANT: Use the VERIFIED KNOWLEDGE BASE if relevant, but DO NOT just copy it. Calculate and explain it properly.`;
-        
-        const model = genAI.getGenerativeModel({ model: actualModelStr });
+        const model = genAI.getGenerativeModel({ 
+            model: actualModelStr,
+            generationConfig: { responseMimeType: "application/json" } // STRICT JSON
+        });
         const result = await model.generateContent(finalPrompt);
         
         return res.status(200).json({ content: result.response.text(), routedTo: `${actualModelStr} + RAG` });
