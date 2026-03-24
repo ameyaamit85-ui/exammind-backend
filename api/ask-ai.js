@@ -1,11 +1,11 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { createClient } = require('@supabase/supabase-js');
 
-// ⚙️ INITIALIZE CLIENTS (No dotenv needed for Vercel)
+// ⚙️ INITIALIZE CLIENTS SAFELY
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-// Supabase Connection
+// Supabase Connection (Only works if keys exist in Vercel)
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY; 
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
@@ -15,7 +15,7 @@ const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supaba
 // ==========================================
 async function getEmbedding(text) {
     try {
-        if (!genAI) throw new Error("Gemini API Key missing for embeddings.");
+        if (!genAI) return null;
         const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
         const result = await embeddingModel.embedContent(text);
         return result.embedding.values;
@@ -34,28 +34,25 @@ async function fetchVerifiedContext(query) {
     const queryVector = await getEmbedding(query);
     if (!queryVector) return "";
 
-    const { data: documents, error } = await supabase.rpc('match_verified_concepts', {
-        query_embedding: queryVector,
-        match_threshold: 0.5, 
-        match_count: 3        
-    });
+    try {
+        const { data: documents, error } = await supabase.rpc('match_verified_concepts', {
+            query_embedding: queryVector,
+            match_threshold: 0.5, 
+            match_count: 3        
+        });
 
-    if (error) {
-        console.error("Supabase Search Error:", error.message);
-        return "";
-    }
+        if (error || !documents || documents.length === 0) return "";
 
-    if (documents && documents.length > 0) {
         let contextString = "VERIFIED KNOWLEDGE BASE:\n\n";
         documents.forEach((doc, index) => {
             contextString += `Concept ${index + 1}: ${doc.name}\n`;
             if (doc.desc_text) contextString += `Explanation: ${doc.desc_text}\n`;
-            if (doc.formula_used) contextString += `Formula: ${doc.formula_used}\n`;
-            contextString += `\n`;
+            if (doc.formula_used) contextString += `Formula: ${doc.formula_used}\n\n`;
         });
         return contextString;
+    } catch (err) {
+        return "";
     }
-    return "";
 }
 
 // ==========================================
@@ -73,32 +70,31 @@ module.exports = async (req, res) => {
     try {
         const { promptText, isFollowUp, contextData, modelChoice, isImage, imageData } = req.body;
 
-        // 📸 IMAGE / VISION LOGIC
+        // 📸 1. IMAGE / VISION LOGIC (FIXED: Strict Solver Prompt)
         if (isImage && imageData) {
-            if (!genAI) throw new Error("Gemini API key missing for Vision.");
+            if (!genAI) return res.status(400).json({ error: true, details: "Gemini API key missing in Vercel." });
             
-            // EXACT MODEL AS REQUESTED
             const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" }); 
-            
             const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
             const imagePart = { inlineData: { data: base64Data, mimeType: "image/jpeg" } };
 
-            const imagePrompt = `You are an elite Engineering AI. Analyze this image. If it's a math problem, solve it.
+            const imagePrompt = `You are a strict Math & Engineering Solver. Look at the problem in the image and SOLVE IT. 
+            DO NOT describe the image. DO NOT talk about AI vision. Provide ONLY the solution steps and final answer.
             OUTPUT STRICTLY IN THIS JSON FORMAT ONLY:
             {
-                "name": "Short title",
-                "problem": "Question text",
+                "name": "Title of the Concept",
+                "problem": "The extracted question",
                 "formula": "LaTeX formula if used",
-                "steps": ["Step 1", "Step 2"],
-                "answer": "Final answer",
-                "desc": "Explanation"
+                "steps": ["Step 1 calculation", "Step 2 calculation"],
+                "answer": "Final exact answer",
+                "desc": "Short engineering principle behind the solution"
             }`;
 
             const result = await model.generateContent([imagePrompt, imagePart]);
-            return res.status(200).json({ content: result.response.text(), routedTo: "Gemini 3.1 Flash Lite" });
+            return res.status(200).json({ content: result.response.text(), routedTo: "Gemini 3.1 Flash Lite (Vision)" });
         }
 
-        // 🧠 TEXT LOGIC (THE RAG ENGINE)
+        // 🧠 2. TEXT LOGIC (RAG ENGINE)
         let verifiedContext = "";
         if (!isFollowUp) {
             verifiedContext = await fetchVerifiedContext(promptText);
@@ -115,20 +111,19 @@ module.exports = async (req, res) => {
         let responseText = "";
         let engineUsed = "";
 
-        // 🔀 SMART ROUTING BASED ON USER CHOICE
+        // 🔀 3. SMART ROUTING
         if (modelChoice === "flash-lite") {
-            if (!genAI) throw new Error("Gemini API key missing.");
+            if (!genAI) return res.status(400).json({ error: true, details: "Gemini API key missing." });
             
-            // EXACT MODEL AS REQUESTED
             const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
             const result = await model.generateContent(finalPrompt);
             responseText = result.response.text();
             engineUsed = "Gemini 3.1 Flash Lite + RAG";
             
         } else {
-            if (!GROQ_API_KEY) throw new Error("Groq API key missing.");
+            // FIX: Bulletproof Llama 70B Call
+            if (!GROQ_API_KEY) return res.status(400).json({ error: true, details: "Groq API key missing in Vercel Environment Variables." });
             
-            // EXACT LLAMA 70B
             const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
                 method: "POST",
                 headers: {
@@ -138,7 +133,7 @@ module.exports = async (req, res) => {
                 body: JSON.stringify({
                     model: "llama-3.3-70b-versatile",
                     messages: [
-                        { role: "system", content: "You output only valid JSON. No preambles." },
+                        { role: "system", content: "You output only valid JSON. No preambles. Focus on accurate calculations." },
                         { role: "user", content: finalPrompt }
                     ],
                     temperature: 0.1
@@ -147,19 +142,20 @@ module.exports = async (req, res) => {
             
             if (!response.ok) {
                 const errorData = await response.text();
-                throw new Error(`Groq API Error: ${errorData}`);
+                // We return valid JSON even if Groq fails, preventing Vercel HTML crash
+                return res.status(500).json({ error: true, details: `Groq AI Error: ${response.statusText}. Please try Gemini instead.` });
             }
             
             const data = await response.json();
             responseText = data.choices[0].message.content;
-            engineUsed = "Llama 70B + RAG";
+            engineUsed = "Llama 3.3 70B + RAG";
         }
 
         return res.status(200).json({ content: responseText, routedTo: engineUsed });
 
     } catch (error) {
         console.error("🔴 API Backend Error:", error.message);
-        // Fallback proper JSON error instead of crashing to HTML
+        // Guarantee JSON output on global crash
         return res.status(500).json({ error: true, details: error.message });
     }
 };
