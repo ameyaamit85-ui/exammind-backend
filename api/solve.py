@@ -1,8 +1,8 @@
 from flask import Flask, request, jsonify
 import sympy as sp
-
+from flask_cors import CORS
 app = Flask(__name__)
-
+CORS(app)
 @app.route('/api/solve', methods=['POST'])
 def solve_math():
     try:
