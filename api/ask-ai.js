@@ -17,13 +17,17 @@ async function getEmbedding(text) {
     } catch (error) { return null; }
 }
 
-async function fetchVerifiedContext(query) {
+// 🧠 NEW: Added 'branch' parameter for Smart RAG Routing
+async function fetchVerifiedContext(query, branch) {
     if (!supabase) return "";
     const queryVector = await getEmbedding(query);
     if (!queryVector) return "";
     try {
         const { data: documents, error } = await supabase.rpc('match_verified_concepts', {
-            query_embedding: queryVector, match_threshold: 0.5, match_count: 3        
+            query_embedding: queryVector, 
+            match_threshold: 0.5, 
+            match_count: 3,
+            target_branch: branch // 🔥 Filter by User's Branch!
         });
         if (error || !documents || documents.length === 0) return "";
 
@@ -44,20 +48,23 @@ module.exports = async (req, res) => {
     if (req.method !== 'POST') return res.status(405).json({ error: true, message: 'Only POST allowed' });
 
     try {
-        const { promptText, isFollowUp, contextData, modelChoice, isImage, imageData } = req.body;
+        // 🧠 NEW: Extracting 'branch' from the request
+        const { promptText, isFollowUp, contextData, modelChoice, isImage, imageData, branch } = req.body;
+        const currentBranch = branch || "Chemical"; // Default safety fallback
 
-        // 📸 1. VISION AI (Using Stable Gemini 2.5 Flash)
+        // 📸 1. VISION AI
         if (isImage && imageData) {
             if (!genAI) return res.status(400).json({ error: true, details: "Gemini API key missing." });
             
             const model = genAI.getGenerativeModel({ 
                 model: "gemini-2.5-flash",
-                generationConfig: { responseMimeType: "application/json" } // STRICT JSON
+                generationConfig: { responseMimeType: "application/json" }
             }); 
             const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
             const imagePart = { inlineData: { data: base64Data, mimeType: "image/jpeg" } };
 
-            const imagePrompt = `You are an Engineering Solver. SOLVE the mathematical problem in the image.
+            const imagePrompt = `You are a strict ${currentBranch} Engineering Solver. Look at the problem and SOLVE IT.
+            OUTPUT ONLY VALID JSON.
             {
                 "name": "Topic Title",
                 "problem": "Question text",
@@ -71,7 +78,7 @@ module.exports = async (req, res) => {
             return res.status(200).json({ content: result.response.text(), routedTo: "Gemini 2.5 Flash (Vision)" });
         }
 
-        // 🧠 2. FOLLOW-UP LOGIC (ELI5/DEEP DIVE -> STRICTLY LLAMA 70B PLAIN TEXT)
+        // 🧠 2. FOLLOW-UP LOGIC (Llama 70B)
         if (isFollowUp) {
             const followUpPrompt = `Context: ${contextData}\nUser Request: ${promptText}\nProvide a clear, plain-text response. Do NOT output JSON. Use LaTeX $$ for math if needed.`;
             const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -79,28 +86,32 @@ module.exports = async (req, res) => {
                 headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
                 body: JSON.stringify({
                     model: "llama-3.3-70b-versatile",
-                    messages: [ { role: "system", content: "You are an engineering tutor." }, { role: "user", content: followUpPrompt } ]
+                    messages: [ { role: "system", content: `You are an elite ${currentBranch} engineering tutor.` }, { role: "user", content: followUpPrompt } ]
                 })
             });
             const data = await response.json();
             return res.status(200).json({ content: data.choices[0].message.content, routedTo: "Llama 3.3 70B (Theory)" });
         }
 
-        // 🚀 3. MAIN SOLVER LOGIC (DYNAMIC GEMINI ROUTING)
+        // 🚀 3. MAIN SOLVER LOGIC
         let actualModelStr = "gemini-2.5-flash"; 
         if (modelChoice === "gemini-3.1-flash-lite") actualModelStr = "gemini-3.1-flash-lite-preview";
         else if (modelChoice === "gemini-3-flash") actualModelStr = "gemini-3.0-flash";
         else if (modelChoice === "gemini-2.5-flash") actualModelStr = "gemini-2.5-flash";
         else if (modelChoice === "gemini-2.5-flash-lite") actualModelStr = "gemini-2.5-flash-lite";
 
-        const verifiedContext = await fetchVerifiedContext(promptText);
-        const SYSTEM_PROMPT = `You are an elite Engineering AI.
+        // 🔥 Passing branch to RAG function
+        const verifiedContext = await fetchVerifiedContext(promptText, currentBranch);
+        
+        // 🔥 Dynamic System Prompt Based on Branch
+        const SYSTEM_PROMPT = `You are an elite ${currentBranch} Engineering AI. Output ONLY valid JSON.
         Format: {"name":"Topic","desc":"Explanation","formula":"$$ LaTeX $$","steps":["Step 1"],"answer":"Final Answer","trap":"Common mistake"}`;
+        
         const finalPrompt = `${SYSTEM_PROMPT}\n\n${verifiedContext}\n\nSolve this query dynamically based on engineering principles: "${promptText}"`;
         
         const model = genAI.getGenerativeModel({ 
             model: actualModelStr,
-            generationConfig: { responseMimeType: "application/json" } // STRICT JSON
+            generationConfig: { responseMimeType: "application/json" }
         });
         const result = await model.generateContent(finalPrompt);
         
