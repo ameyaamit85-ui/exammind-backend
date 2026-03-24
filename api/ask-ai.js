@@ -1,7 +1,6 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { createClient } = require('@supabase/supabase-js');
 
-// ⚙️ INITIALIZE CLIENTS
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
@@ -9,25 +8,19 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY; 
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
-// ==========================================
-// 🔍 1. VECTOR EMBEDDING (For Gemini Only)
-// ==========================================
 async function getEmbedding(text) {
     try {
         if (!genAI) return null;
         const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
         const result = await embeddingModel.embedContent(text);
         return result.embedding.values;
-    } catch (error) {
-        return null;
-    }
+    } catch (error) { return null; }
 }
 
 async function fetchVerifiedContext(query) {
     if (!supabase) return "";
     const queryVector = await getEmbedding(query);
     if (!queryVector) return "";
-
     try {
         const { data: documents, error } = await supabase.rpc('match_verified_concepts', {
             query_embedding: queryVector, match_threshold: 0.5, match_count: 3        
@@ -42,9 +35,6 @@ async function fetchVerifiedContext(query) {
     } catch (err) { return ""; }
 }
 
-// ==========================================
-// 🚀 2. THE MAIN API HANDLER
-// ==========================================
 module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -56,16 +46,16 @@ module.exports = async (req, res) => {
     try {
         const { promptText, isFollowUp, contextData, modelChoice, isImage, imageData } = req.body;
 
-        // 📸 A. IMAGE / VISION LOGIC (Fixed LaTeX Tags)
+        // 📸 1. VISION AI (FIXED: Using STABLE Gemini 2.5 Flash to prevent 503 Server Errors)
         if (isImage && imageData) {
             if (!genAI) return res.status(400).json({ error: true, details: "Gemini API key missing." });
             
-            const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" }); 
+            const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
             const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
             const imagePart = { inlineData: { data: base64Data, mimeType: "image/jpeg" } };
 
-            const imagePrompt = `You are a strict Engineering Solver. Look at the problem and SOLVE IT directly.
-            OUTPUT ONLY VALID JSON. DO NOT use markdown code blocks (\`\`\`json).
+            const imagePrompt = `You are a strict Engineering Solver. Look at the problem and SOLVE IT.
+            OUTPUT ONLY VALID JSON.
             {
                 "name": "Topic Title",
                 "problem": "Question text",
@@ -73,82 +63,45 @@ module.exports = async (req, res) => {
                 "steps": ["Step 1", "Step 2"],
                 "answer": "Final numeric answer",
                 "desc": "Short explanation"
-            }
-            CRITICAL: You MUST wrap any formula with $$ at the beginning and end.`;
+            }`;
 
             const result = await model.generateContent([imagePrompt, imagePart]);
-            return res.status(200).json({ content: result.response.text(), routedTo: "Gemini 3.1 Flash Lite" });
+            return res.status(200).json({ content: result.response.text(), routedTo: "Gemini 2.5 Flash (Vision)" });
         }
 
-        // 🧠 B. FOLLOW-UP LOGIC (ELI5 / Deep Dive) - NO JSON HERE!
+        // 🧠 2. FOLLOW-UP LOGIC (ELI5/DEEP DIVE -> STRICTLY LLAMA 70B)
         if (isFollowUp) {
-            const followUpPrompt = `You are an expert Engineering Tutor.
-            Context regarding the topic: ${contextData}
-            User Request: ${promptText}
-            Provide a clear, plain-text response. Do NOT output JSON. Use LaTeX $$ for math if needed.`;
-
-            if (modelChoice === "flash-lite") {
-                const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
-                const result = await model.generateContent(followUpPrompt);
-                return res.status(200).json({ content: result.response.text(), routedTo: "Gemini 3.1 Flash Lite" });
-            } else {
-                const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-                    method: "POST",
-                    headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        model: "llama-3.3-70b-versatile",
-                        messages: [
-                            { role: "system", content: "You are a helpful engineering tutor." },
-                            { role: "user", content: followUpPrompt }
-                        ]
-                    })
-                });
-                const data = await response.json();
-                return res.status(200).json({ content: data.choices[0].message.content, routedTo: "Llama 3.3 70B" });
-            }
-        }
-
-        // 📚 C. MAIN TEXT LOGIC (With User's Cache Rules)
-        const SYSTEM_PROMPT = `You are an elite Engineering AI. Output ONLY valid JSON.
-        Format: {"name":"Topic","desc":"Explanation","formula":"$$ LaTeX $$","steps":["Step 1"],"answer":"Final Answer","trap":"Common mistake"}`;
-        
-        let finalPrompt = "";
-        let responseText = "";
-        let engineUsed = "";
-
-        if (modelChoice === "flash-lite") {
-            // GEMINI GETS THE RAG CACHE
-            const verifiedContext = await fetchVerifiedContext(promptText);
-            finalPrompt = `${SYSTEM_PROMPT}\n\n${verifiedContext}\n\nSolve this for the user: "${promptText}"\nIMPORTANT: Use the VERIFIED KNOWLEDGE BASE if relevant.`;
-            
-            const model = genAI.getGenerativeModel({ model: "gemini-3.1-flash-lite-preview" });
-            const result = await model.generateContent(finalPrompt);
-            responseText = result.response.text();
-            engineUsed = "Gemini 3.1 Flash Lite + RAG";
-            
-        } else {
-            // LLAMA 70B GETS PURE SOLVER MODE (NO CACHE)
-            finalPrompt = `${SYSTEM_PROMPT}\n\nSolve this purely based on your engineering knowledge: "${promptText}"`;
-            
+            const followUpPrompt = `Context: ${contextData}\nUser Request: ${promptText}\nProvide a clear, plain-text response. Do NOT output JSON. Use LaTeX $$ for math if needed.`;
             const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
                 method: "POST",
                 headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
                 body: JSON.stringify({
                     model: "llama-3.3-70b-versatile",
-                    messages: [
-                        { role: "system", content: "You output only valid JSON." },
-                        { role: "user", content: finalPrompt }
-                    ],
-                    response_format: { type: "json_object" }, // THIS GUARANTEES IT WON'T BREAK
-                    temperature: 0.1
+                    messages: [ { role: "system", content: "You are an engineering tutor." }, { role: "user", content: followUpPrompt } ]
                 })
             });
             const data = await response.json();
-            responseText = data.choices[0].message.content;
-            engineUsed = "Llama 3.3 70B (Pure)";
+            return res.status(200).json({ content: data.choices[0].message.content, routedTo: "Llama 3.3 70B (Theory)" });
         }
 
-        return res.status(200).json({ content: responseText, routedTo: engineUsed });
+        // 🚀 3. MAIN SOLVER LOGIC (DYNAMIC GEMINI ROUTING)
+        let actualModelStr = "gemini-2.5-flash"; // Default Fallback
+        if (modelChoice === "gemini-3.1-flash-lite") actualModelStr = "gemini-3.1-flash-lite-preview";
+        else if (modelChoice === "gemini-3-flash") actualModelStr = "gemini-3.0-flash";
+        else if (modelChoice === "gemini-2.5-flash") actualModelStr = "gemini-2.5-flash";
+        else if (modelChoice === "gemini-2.5-flash-lite") actualModelStr = "gemini-2.5-flash-lite";
+
+        const verifiedContext = await fetchVerifiedContext(promptText);
+        
+        const SYSTEM_PROMPT = `You are an elite Engineering AI. Output ONLY valid JSON.
+        Format: {"name":"Topic","desc":"Explanation","formula":"$$ LaTeX $$","steps":["Step 1"],"answer":"Final Answer","trap":"Common mistake"}`;
+        
+        const finalPrompt = `${SYSTEM_PROMPT}\n\n${verifiedContext}\n\nSolve this query dynamically based on engineering principles: "${promptText}"\nIMPORTANT: Use the VERIFIED KNOWLEDGE BASE if relevant, but DO NOT just copy it. Calculate and explain it properly.`;
+        
+        const model = genAI.getGenerativeModel({ model: actualModelStr });
+        const result = await model.generateContent(finalPrompt);
+        
+        return res.status(200).json({ content: result.response.text(), routedTo: `${actualModelStr} + RAG` });
 
     } catch (error) {
         console.error("🔴 API Error:", error.message);
