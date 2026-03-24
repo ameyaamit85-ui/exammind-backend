@@ -1,14 +1,16 @@
 from flask import Flask, request, jsonify
-import sympy as sp
 from flask_cors import CORS
+import sympy as sp
+
 app = Flask(__name__)
 CORS(app)
+
 @app.route('/api/solve', methods=['POST'])
 def solve_math():
     try:
         data = request.get_json()
         expression = data.get('expression', '')
-        operation = data.get('operation', 'simplify') # Options: simplify, solve, integrate, derive
+        operation = data.get('operation', 'simplify')
         variable = data.get('variable', 'x')
 
         if not expression:
@@ -26,7 +28,7 @@ def solve_math():
         elif operation == 'derive':
             result = sp.diff(expr, var)
         elif operation == 'solve':
-            result = sp.solve(expr, var) # Solves expression = 0
+            result = sp.solve(expr, var)
         else:
             result = sp.simplify(expr)
 
@@ -42,7 +44,3 @@ def solve_math():
 
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 400
-
-# Required for Vercel Python Serverless
-def handler(request, response):
-    return app(request, response)
