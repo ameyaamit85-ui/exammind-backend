@@ -112,6 +112,7 @@ module.exports = async (req, res) => {
             const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
             const imagePart = { inlineData: { data: base64Data, mimeType: "image/jpeg" } };
 
+            // 🔥 TRAP ADDED TO VISION PROMPT
             const imagePrompt = `You are a strict ${currentBranch} Engineering Solver. Look at the problem and SOLVE IT.
             OUTPUT ONLY VALID JSON.
             {
@@ -120,7 +121,8 @@ module.exports = async (req, res) => {
                 "formula": "$$ \\text{Formula here} $$", 
                 "steps": ["Step 1", "Step 2"],
                 "answer": "Final numeric answer",
-                "desc": "Short explanation"
+                "desc": "Short explanation",
+                "trap": "Identify a common student mistake or calculation trap here"
             }`;
 
             const result = await model.generateContent([imagePrompt, imagePart]);
