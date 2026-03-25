@@ -1,15 +1,28 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { createClient } = require('@supabase/supabase-js');
 
-const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY; 
 const supabase = (supabaseUrl && supabaseKey) ? createClient(supabaseUrl, supabaseKey) : null;
 
+// 🧠 UPGRADE 1: API Key Rotation Hack (Load Balancing)
+function getGenAI() {
+    const apiKeys = [
+        process.env.GEMINI_API_KEY,
+        process.env.GEMINI_API_KEY_1,
+        process.env.GEMINI_API_KEY_2,
+        process.env.GEMINI_API_KEY_3
+    ].filter(Boolean); // Removes empty variables
+
+    if (apiKeys.length === 0) return null;
+    const randomKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
+    return new GoogleGenerativeAI(randomKey);
+}
+
 async function getEmbedding(text) {
     try {
+        const genAI = getGenAI();
         if (!genAI) return null;
         const embeddingModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
         const result = await embeddingModel.embedContent(text);
@@ -17,7 +30,7 @@ async function getEmbedding(text) {
     } catch (error) { return null; }
 }
 
-// 🧠 NEW: Added 'branch' parameter for Smart RAG Routing
+// 🛡️ UPGRADE 2: Optimized RAG Fetching (Egress Protection)
 async function fetchVerifiedContext(query, branch) {
     if (!supabase) return "";
     const queryVector = await getEmbedding(query);
@@ -27,8 +40,9 @@ async function fetchVerifiedContext(query, branch) {
             query_embedding: queryVector, 
             match_threshold: 0.5, 
             match_count: 3,
-            target_branch: branch // 🔥 Filter by User's Branch!
-        });
+            target_branch: branch 
+        }).select('name, desc_text, formula_used'); // 🔥 Strict selection to save Egress!
+
         if (error || !documents || documents.length === 0) return "";
 
         let contextString = "VERIFIED KNOWLEDGE BASE:\n\n";
@@ -37,6 +51,31 @@ async function fetchVerifiedContext(query, branch) {
         });
         return contextString;
     } catch (err) { return ""; }
+}
+
+// ⚡ UPGRADE 3: Supabase Caching Engine
+async function checkCache(query) {
+    if (!supabase) return null;
+    try {
+        const { data, error } = await supabase
+            .from('ai_cache')
+            .select('response')
+            .eq('query', query.trim().toLowerCase())
+            .limit(1)
+            .single();
+        if (data && data.response) return data.response;
+    } catch (err) { return null; }
+    return null;
+}
+
+async function saveCache(query, responseText) {
+    if (!supabase) return;
+    try {
+        await supabase.from('ai_cache').insert([{
+            query: query.trim().toLowerCase(),
+            response: responseText
+        }]);
+    } catch (err) { /* Silently ignore duplicate errors */ }
 }
 
 module.exports = async (req, res) => {
@@ -48,16 +87,26 @@ module.exports = async (req, res) => {
     if (req.method !== 'POST') return res.status(405).json({ error: true, message: 'Only POST allowed' });
 
     try {
-        // 🧠 NEW: Extracting 'branch' from the request
         const { promptText, isFollowUp, contextData, modelChoice, isImage, imageData, branch } = req.body;
-        const currentBranch = branch || "Chemical"; // Default safety fallback
+        const currentBranch = branch || "Chemical"; 
+
+        const genAI = getGenAI();
+
+        // ⚡ CACHE CHECK (Bypass API if already answered)
+        if (!isImage && !isFollowUp && promptText) {
+            const cachedAnswer = await checkCache(promptText);
+            if (cachedAnswer) {
+                return res.status(200).json({ content: cachedAnswer, routedTo: "ExamMind Core (⚡ Cached)" });
+            }
+        }
 
         // 📸 1. VISION AI
         if (isImage && imageData) {
             if (!genAI) return res.status(400).json({ error: true, details: "Gemini API key missing." });
             
+            // 🔥 Forced strictly to 3.1 flash lite preview
             const model = genAI.getGenerativeModel({ 
-                model: "gemini-2.5-flash",
+                model: "gemini-3.1-flash-lite-preview",
                 generationConfig: { responseMimeType: "application/json" }
             }); 
             const base64Data = imageData.replace(/^data:image\/\w+;base64,/, "");
@@ -75,10 +124,10 @@ module.exports = async (req, res) => {
             }`;
 
             const result = await model.generateContent([imagePrompt, imagePart]);
-            return res.status(200).json({ content: result.response.text(), routedTo: "Gemini 2.5 Flash (Vision)" });
+            return res.status(200).json({ content: result.response.text(), routedTo: "ExamMind Vision AI" }); // 🍏 Custom Branding
         }
 
-        // 🧠 2. FOLLOW-UP LOGIC (Llama 70B)
+        // 🧠 2. FOLLOW-UP LOGIC (Llama 70B - Untouched)
         if (isFollowUp) {
             const followUpPrompt = `Context: ${contextData}\nUser Request: ${promptText}\nProvide a clear, plain-text response. Do NOT output JSON. Use LaTeX $$ for math if needed.`;
             const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -90,20 +139,15 @@ module.exports = async (req, res) => {
                 })
             });
             const data = await response.json();
-            return res.status(200).json({ content: data.choices[0].message.content, routedTo: "Llama 3.3 70B (Theory)" });
+            return res.status(200).json({ content: data.choices[0].message.content, routedTo: "ExamMind Core" }); // 🍏 Custom Branding
         }
 
         // 🚀 3. MAIN SOLVER LOGIC
-        let actualModelStr = "gemini-2.5-flash"; 
-        if (modelChoice === "gemini-3.1-flash-lite") actualModelStr = "gemini-3.1-flash-lite-preview";
-        else if (modelChoice === "gemini-3-flash") actualModelStr = "gemini-3.0-flash";
-        else if (modelChoice === "gemini-2.5-flash") actualModelStr = "gemini-2.5-flash";
-        else if (modelChoice === "gemini-2.5-flash-lite") actualModelStr = "gemini-2.5-flash-lite";
+        // 🔥 Forced strictly to 3.1 flash lite preview
+        let actualModelStr = "gemini-3.1-flash-lite-preview"; 
 
-        // 🔥 Passing branch to RAG function
         const verifiedContext = await fetchVerifiedContext(promptText, currentBranch);
         
-        // 🔥 OP SYSTEM PROMPT: Force AI to verify and correct flawed data
         const SYSTEM_PROMPT = `You are an elite ${currentBranch} Engineering AI. 
         Use the provided VERIFIED KNOWLEDGE BASE as your primary reference. 
         HOWEVER, if you detect an obvious mathematical error, formula mismatch, or violation of core engineering principles in the knowledge base, YOU MUST CORRECT IT in your final output. Trust your fundamental training over flawed data.
@@ -117,8 +161,12 @@ module.exports = async (req, res) => {
             generationConfig: { responseMimeType: "application/json" }
         });
         const result = await model.generateContent(finalPrompt);
-        
-        return res.status(200).json({ content: result.response.text(), routedTo: `${actualModelStr} + RAG` });
+        const finalText = result.response.text();
+
+        // ⚡ SAVE NEW ANSWER TO CACHE
+        await saveCache(promptText, finalText);
+
+        return res.status(200).json({ content: finalText, routedTo: "ExamMind Core" }); // 🍏 Custom Branding
 
     } catch (error) {
         console.error("🔴 API Error:", error.message);
